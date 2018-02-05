@@ -1,10 +1,12 @@
 import os
 import os.path
+import numpy as np
 import torchvision
 import torch
 from torch import nn
 from torch.autograd import Variable
 from torch.utils.data import DataLoader
+from torch.utils.data.sampler import SubsetRandomSampler
 from torch.utils.data.dataloader import default_collate
 
 
@@ -13,9 +15,23 @@ def label_squeezing_collate_fn(batch):
     return x, y.long().squeeze()
 
 
-def get_data_loader(dataset, batch_size, cuda=False, collate_fn=None):
+def get_data_loader(dataset, batch_size, cuda=False, collate_fn=None,
+                    train=True, valid_proportion=0.):
+    '''Return data-loader for [dataset], with optional split in training and validation set.'''
+
+    dataset_size = len(dataset)
+    indices = list(range(dataset_size))
+    split = int(np.floor(valid_proportion*dataset_size))
+    if train:
+        # use training-set
+        indices_to_use = indices[split:]
+    else:
+        # use validation-set
+        indices_to_use = indices[:split]
+    sampler = SubsetRandomSampler(indices_to_use)
+
     return DataLoader(
-        dataset, batch_size=batch_size, shuffle=True,
+        dataset, batch_size=batch_size, sampler=sampler,
         collate_fn=(collate_fn or default_collate),
         **({'num_workers': 0, 'pin_memory': True} if cuda else {})
     )
@@ -27,26 +43,21 @@ def save_checkpoint(model, model_dir):
     # save the checkpoint.
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)
-
     torch.save({'state': model.state_dict()}, path)
 
     # notify that we successfully saved the checkpoint.
-    print('=> saved the model {name} to {path}'.format(
-        name=model.name, path=path
-    ))
+    print('=> saved model {name} to {path}'.format(name=model.name, path=model_dir))
 
 
 def load_checkpoint(model, model_dir):
     path = os.path.join(model_dir, model.name)
 
-    # load the checkpoint.
+    # load parameters (i.e., [model] will now have the state of the loaded model).
     checkpoint = torch.load(path)
-    print('=> loaded checkpoint of {name} from {path}'.format(
-        name=model.name, path=path
-    ))
-
-    # load parameters and return the checkpoint's epoch and precision.
     model.load_state_dict(checkpoint['state'])
+
+    # load the checkpoint.
+    print('=> loaded checkpoint of {name} from {path}'.format(name=model.name, path=model_dir))
 
 
 def test_model(model, sample_size, path, verbose=True):
@@ -61,27 +72,30 @@ def test_model(model, sample_size, path, verbose=True):
 
 
 def validate(model, dataset, test_size=1024,
-             cuda=False, verbose=True, collate_fn=None):
+             cuda=False, verbose=True, collate_fn=None,
+             train=True, valid_proportion=0.):
+    '''Evaluate precision (= accuracy or proportion correct) of [model] on [dataset].'''
+
+    model.eval()
     data_loader = get_data_loader(
-        dataset, 128, cuda=cuda,
-        collate_fn=(collate_fn or default_collate),
+        dataset, 128, cuda=cuda, collate_fn=(collate_fn or default_collate),
+        train=train, valid_proportion=valid_proportion
     )
     total_tested = 0
     total_correct = 0
     for data, labels in data_loader:
-        # break on test size.
-        if total_tested >= test_size:
-            break
+        # break on [test_size] (if "None", full dataset is used)
+        if test_size:
+            if total_tested >= test_size:
+                break
         # test the model.
         data = Variable(data).cuda() if cuda else Variable(data)
         labels = Variable(labels).cuda() if cuda else Variable(labels)
         scores = model(data)
         _, predicted = torch.max(scores, 1)
-
         # update statistics.
         total_correct += (predicted == labels).sum().data[0]
         total_tested += len(data)
-
     precision = total_correct / total_tested
     if verbose:
         print('=> precision: {:.3f}'.format(precision))

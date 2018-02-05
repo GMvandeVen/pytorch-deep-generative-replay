@@ -10,14 +10,14 @@ PERM_MNIST_LR=0.0001
 PERM_MNIST_IMPORTANCE_OF_NEW_TASK=0.3
 
 ./main.py --train \
-  --experiment=permutated-mnist \
+  --experiment=permMNIST \
   --replay-mode=exact-replay \
   --solver-iterations=$PERM_MNIST_SOLVER_ITERATIONS \
   --lr=$PERM_MNIST_LR \
   --importance-of-new-task=$PERM_MNIST_IMPORTANCE_OF_NEW_TASK
 
 ./main.py --train \
-  --experiment=permutated-mnist \
+  --experiment=permMNIST \
   --replay-mode=generative-replay \
   --generator-iterations=$PERM_MNIST_GENERATOR_ITERATIONS \
   --solver-iterations=$PERM_MNIST_SOLVER_ITERATIONS \
@@ -25,7 +25,7 @@ PERM_MNIST_IMPORTANCE_OF_NEW_TASK=0.3
   --importance-of-new-task=$PERM_MNIST_IMPORTANCE_OF_NEW_TASK
 
 ./main.py --train \
-  --experiment=permutated-mnist \
+  --experiment=permMNIST \
   --replay-mode=none \
   --solver-iterations=$PERM_MNIST_SOLVER_ITERATIONS \
   --lr=$PERM_MNIST_LR

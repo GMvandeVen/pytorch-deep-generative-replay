@@ -1,56 +1,26 @@
 import os.path
 import copy
-from torch import optim
-from torch import nn
 import utils
 import visual
 
 
 def train(scholar, train_datasets, test_datasets, replay_mode,
-          generator_lambda=10.,
-          generator_c_updates_per_g_update=5,
           generator_iterations=2000,
           solver_iterations=1000,
           importance_of_new_task=.5,
           batch_size=32,
           test_size=1024,
           sample_size=36,
-          lr=1e-03, weight_decay=1e-05,
-          beta1=.5, beta2=.9,
           loss_log_interval=30,
           eval_log_interval=50,
-          image_log_interval=100,
           sample_log_interval=300,
           sample_log=False,
           sample_dir='./samples',
           checkpoint_dir='./checkpoints',
           collate_fn=None,
-          cuda=False):
-    # define solver criterion and generators for the scholar model.
-    solver_criterion = nn.CrossEntropyLoss()
-    solver_optimizer = optim.Adam(
-        scholar.solver.parameters(),
-        lr=lr, weight_decay=weight_decay, betas=(beta1, beta2),
-    )
-    generator_g_optimizer = optim.Adam(
-        scholar.generator.generator.parameters(),
-        lr=lr, weight_decay=weight_decay, betas=(beta1, beta2),
-    )
-    generator_c_optimizer = optim.Adam(
-        scholar.generator.critic.parameters(),
-        lr=lr, weight_decay=weight_decay, betas=(beta1, beta2),
-    )
-
-    # set the criterion, optimizers, and training configurations for the
-    # scholar model.
-    scholar.solver.set_criterion(solver_criterion)
-    scholar.solver.set_optimizer(solver_optimizer)
-    scholar.generator.set_lambda(generator_lambda)
-    scholar.generator.set_generator_optimizer(generator_g_optimizer)
-    scholar.generator.set_critic_optimizer(generator_c_optimizer)
-    scholar.generator.set_critic_updates_per_generator_update(
-        generator_c_updates_per_g_update
-    )
+          cuda=False,
+          valid_proportion=1./6):
+    # set model in training-mode.
     scholar.train()
 
     # define the previous scholar who will generate samples of previous tasks.
@@ -61,7 +31,6 @@ def train(scholar, train_datasets, test_datasets, replay_mode,
         # define callbacks for visualizing the training process.
         generator_training_callbacks = [_generator_training_callback(
             loss_log_interval=loss_log_interval,
-            image_log_interval=image_log_interval,
             sample_log_interval=sample_log_interval,
             sample_log=sample_log,
             sample_dir=sample_dir,
@@ -86,6 +55,7 @@ def train(scholar, train_datasets, test_datasets, replay_mode,
             cuda=cuda,
             collate_fn=collate_fn,
             env=scholar.name,
+            valid_proportion=valid_proportion
         )]
 
         # train the scholar with generative replay.
@@ -100,16 +70,15 @@ def train(scholar, train_datasets, test_datasets, replay_mode,
             solver_iterations=solver_iterations,
             solver_training_callbacks=solver_training_callbacks,
             collate_fn=collate_fn,
+            valid_proportion=valid_proportion
         )
 
-        previous_scholar = (
-            copy.deepcopy(scholar) if replay_mode == 'generative-replay' else
-            None
-        )
-        previous_datasets = (
-            train_datasets[:task] if replay_mode == 'exact-replay' else
-            None
-        )
+        # update the source for reactivation.
+        if replay_mode=='generative-replay':
+            previous_scholar = copy.deepcopy(scholar)
+        if replay_mode=='exact-replay':
+            previous_datasets = train_datasets[:task]
+
 
     # save the model after the experiment.
     print()
@@ -117,10 +86,11 @@ def train(scholar, train_datasets, test_datasets, replay_mode,
     print()
     print()
 
+#-----------------------------------------------------------------------------------------------#
+
 
 def _generator_training_callback(
         loss_log_interval,
-        image_log_interval,
         sample_log_interval,
         sample_log,
         sample_dir,
@@ -160,15 +130,15 @@ def _generator_training_callback(
                 -result['c_loss'], 'generator w distance', iteration, env=env
             )
 
-        # log the generated images of the generator.
-        if iteration % image_log_interval == 0:
+        # log the generated images of the generator (to visdom).
+        if iteration % sample_log_interval == 0:
             visual.visualize_images(
                 generator.sample(sample_size).data,
                 'generated samples ({replay_mode})'
                 .format(replay_mode=replay_mode), env=env,
             )
 
-        # log the sample images of the generator
+        # log the sample images of the generator (to file)
         if iteration % sample_log_interval == 0 and sample_log:
             utils.test_model(generator, sample_size, os.path.join(
                 sample_dir,
@@ -191,7 +161,8 @@ def _solver_training_callback(
         cuda,
         replay_mode,
         collate_fn,
-        env):
+        env,
+        valid_proportion):
 
     def cb(solver, progress, batch_index, result):
         iteration = (current_task-1)*total_iterations + batch_index
@@ -224,6 +195,7 @@ def _solver_training_callback(
                 utils.validate(
                     solver, test_datasets[i], test_size=test_size,
                     cuda=cuda, verbose=False, collate_fn=collate_fn,
+                    train=False if valid_proportion>0 else True, valid_proportion=valid_proportion
                 ) if i+1 <= current_task else 0 for i in
                 range(len(test_datasets))
             ]

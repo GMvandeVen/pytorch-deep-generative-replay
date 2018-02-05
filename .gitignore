@@ -107,3 +107,6 @@ samples/
 .env
 _cache_*
 .download.cgi*
+
+.idea/
+notebooks/
